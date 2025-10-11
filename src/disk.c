@@ -9,7 +9,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-ssize_t disk_read(disk_t* dev, void* buf, size_t size, off_t offset) {
+disk_mgr_t disk_mgr;
+
+ssize_t disk_read(struct disk* dev, void* buf, size_t size, off_t offset) {
     if (!dev || !buf) 
         return -1;
     pthread_mutex_lock(&dev->lock);
@@ -19,7 +21,7 @@ ssize_t disk_read(disk_t* dev, void* buf, size_t size, off_t offset) {
     return n;
 }
 
-ssize_t disk_write(disk_t* dev, const void* buf, size_t size, off_t offset) {
+ssize_t disk_write(struct disk* dev, const void* buf, size_t size, off_t offset) {
     if (!dev || !buf) 
         return -1;  
     pthread_mutex_lock(&dev->lock);
@@ -29,7 +31,7 @@ ssize_t disk_write(disk_t* dev, const void* buf, size_t size, off_t offset) {
     return n;
 }
 
-size_t disk_sync(disk_t *dev) {
+size_t disk_sync(struct disk *dev) {
     return 0;
 }
 
@@ -39,11 +41,11 @@ diskrws_t disk_wrs = {
     .sync = disk_sync,
 };
 
-disk_t* disk_mount(const char* path, size_t bsize, size_t bcount) {
+struct disk* disk_mount(const char* path, size_t bsize, size_t bcount) {
     if (!path || !bsize || !bcount) 
         return NULL;
 
-    disk_t *d = malloc(sizeof(disk_t));
+    struct disk *d = malloc(sizeof(struct disk));
     if (!d)
         return NULL;
 
@@ -64,7 +66,7 @@ disk_t* disk_mount(const char* path, size_t bsize, size_t bcount) {
     return d;
 }
 
-void disk_umount(disk_t* d) {
+void disk_umount(struct disk* d) {
     if (!d)
         return;
     
@@ -72,11 +74,11 @@ void disk_umount(disk_t* d) {
     free(d);
 }
 
-void disk_init(disk_mangr_t* mangr) {
-    memset(mangr, 0, sizeof(disk_mangr_t));
+void disk_init(disk_mgr_t* mangr) {
+    memset(mangr, 0, sizeof(disk_mgr_t));
 }
 
-size_t disk_register(disk_mangr_t* mangr, disk_t* disk, diskrws_t* rws) {
+size_t disk_register(disk_mgr_t* mangr, struct disk* disk, diskrws_t* rws) {
     if (!mangr || !disk || !rws) 
         return -1;
 
@@ -91,12 +93,12 @@ size_t disk_register(disk_mangr_t* mangr, disk_t* disk, diskrws_t* rws) {
     return id;
 }
 
-disk_t* disk_get(disk_mangr_t* mangr, int id) {
+struct disk* disk_get(disk_mgr_t* disk_mgr, int id) {
     if (id < 0 || id >= MAX_DISKS) {
         return NULL;
     }
 
-    disk_t* disk = mangr->disks[id];
+    struct disk* disk = disk_mgr->disks[id];
 
     return disk;
 }

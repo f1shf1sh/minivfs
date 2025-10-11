@@ -7,6 +7,13 @@
 #include <pthread.h>
 #include "defs.h"
 
+struct disk; 
+
+typedef struct {
+    ssize_t (*read)(struct disk*, void*, size_t, off_t);
+    ssize_t (*write)(struct disk*, const void*, size_t, off_t);
+    size_t (*sync)(struct disk*);
+} diskrws_t;
 
 typedef struct disk {
     int fd; // disk file fd
@@ -19,28 +26,24 @@ typedef struct disk {
 } disk_t;
 
 typedef struct {
-    ssize_t (*read)(disk_t*, void*, size_t, off_t);
-    ssize_t (*write)(disk_t*, const void*, size_t, off_t);
-    size_t (*sync)(disk_t*);
-} diskrws_t;
-
-typedef struct {
-    disk_t *disks[MAX_DISKS];
+    struct disk *disks[MAX_DISKS];
     diskrws_t *ops[MAX_DISKS];
     size_t count;
     pthread_mutex_t lock;
-} disk_mangr_t;
+} disk_mgr_t;
 
+// global var to manager disk
+extern disk_mgr_t disk_mgr;
 
-void disk_init(disk_mangr_t*);
-size_t dev_register(disk_mangr_t*, disk_t*, diskrws_t*);
-disk_t* disk_get(disk_mangr_t*, int);
+void disk_init(disk_mgr_t*);
+size_t disk_register(disk_mgr_t*, struct disk*, diskrws_t*);
+struct disk* disk_get(disk_mgr_t*, int);
 
-disk_t* disk_mount(const char*, size_t, size_t);
-void disk_umount(disk_t*);
+struct disk* disk_mount(const char*, size_t, size_t);
+void disk_umount(struct disk*);
 
-ssize_t disk_read(disk_t*, void*, size_t, off_t);
-ssize_t disk_write(disk_t*, const void*, size_t, off_t);
-size_t disk_sync(disk_t*);
+ssize_t disk_read(struct disk*, void*, size_t, off_t);
+ssize_t disk_write(struct disk*, const void*, size_t, off_t);
+size_t disk_sync(struct disk*);
 
 #endif
