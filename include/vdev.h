@@ -20,7 +20,7 @@ struct vdev {
     char name[32];             // 设备名
     unsigned int dev_id;       // 唯一ID
     void *priv;                // 私有上下文 (disk结构或其他)
-    vdev_ops_t *ops;            // 操作函数表
+    vdev_ops_t ops;            // 操作函数表
 };
 
 // 设备表
@@ -35,7 +35,7 @@ extern vdev_table_t vdev_table;
 
 // 接口
 // int vdev_register(vdev_t *dev, cache_mgr_t *cache);
-// vdev_t *vdev_get(const char *name);
+// vdev_t *vdev_get(const char *name);s
 // int vdev_unregister(const char *name);
 
 #endif

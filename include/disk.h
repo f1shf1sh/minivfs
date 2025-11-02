@@ -6,7 +6,7 @@
 
 typedef struct disk {
     int fd;                  // 文件描述符（或者内存指针）
-    vdev_t *vdev;
+    vdev_t vdev;
     unsigned char *bitmap;
     unsigned int total_blocks;
     unsigned int block_size;

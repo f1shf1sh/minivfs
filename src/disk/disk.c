@@ -49,24 +49,18 @@ int disk_init(disk_t *d, const char *path, unsigned int block_size, unsigned int
         return -1;
     }
 
-    vdev_ops_t *ops = calloc(1, sizeof(vdev_ops_t));
-    ops->read = disk_read;
-    ops->write = disk_write;
-    ops->sync = disk_sync;
-
-    vdev_t *vdev = calloc(1, sizeof(vdev_t));
-    
     // init vdev_t
-    vdev->dev_id = fd;
-    vdev->ops = ops;
-    vdev->priv = d;
-    strncpy(vdev->name, path, 32);
-
+    d->vdev.ops.read = disk_read;
+    d->vdev.ops.write = disk_write;
+    d->vdev.ops.sync = disk_sync;
+    d->vdev.dev_id = fd;
+    d->vdev.priv = d;
+    strncpy(d->vdev.name, path, 32);
+    
     // init disk_t
     d->block_size = block_size;
     d->total_blocks = total_blocks;
     d->fd = fd;
-    d->vdev = vdev;
     
     /*
     #TODO 增加磁盘大小判断
@@ -85,7 +79,5 @@ void disk_destory(void *priv) {
         close(disk->fd);
     }
 
-    free(disk->vdev->ops);
-    free(disk->vdev);
     free(disk);
 }

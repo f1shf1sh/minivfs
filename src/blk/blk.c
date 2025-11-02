@@ -25,25 +25,25 @@ int blk_read(void *priv, void *buf, unsigned int block_no) {
     blk_mgr_t *mgr = (blk_mgr_t*)priv;
     if (!mgr || !buf || block_no >= mgr->total_blocks) 
         return -1;
-    if (!mgr->backend || !mgr->backend->ops || !mgr->backend->ops->read) 
+    if (!mgr->backend) 
         return -1;
 
-    return mgr->backend->ops->read(mgr->backend->priv, buf, block_no);
+    return mgr->backend->ops.read(mgr->backend->priv, buf, block_no);
 }
 
 int blk_write(void *priv, const void *buf, unsigned int block_no) {
     blk_mgr_t *mgr = (blk_mgr_t*)priv;
     if (!mgr || !buf || block_no >= mgr->total_blocks) 
         return -1;
-    if (!mgr->backend || !mgr->backend->ops || !mgr->backend->ops->write) 
+    if (!mgr->backend) 
         return -1;
 
-    return mgr->backend->ops->write(mgr->backend->priv, buf, block_no);
+    return mgr->backend->ops.write(mgr->backend->priv, buf, block_no);
 }
 
 int blk_sync(void *priv) {
     blk_mgr_t *mgr = (blk_mgr_t*)priv;
-    return mgr->backend->ops->sync(mgr->backend);
+    return (mgr->backend->ops).sync((void*)mgr->backend->priv);
 }
 
 // ---------------- 分配/释放块 ----------------
