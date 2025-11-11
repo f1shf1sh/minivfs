@@ -12,12 +12,12 @@ int sys_open(fs_t *fs, fd_t *fd_table, const char *pathname, int flags) {
     icache_t *ic = NULL;
     int create = (flags & O_CREAT) ? 1 : 0;
 
-    if (path_resolve(&fs, pathname, create, &ic) < 0) 
+    if (path_resolve(fs, pathname, create, &ic) < 0) 
         return -1;
 
     // 分配 fd
     int fd = -1;
-    for (int i = 0; i < MAXFD; i++) {
+    for (int i = 1; i <= MAXFD; i++) {
         if (!fd_table[i].used) {
             fd = i;
             fd_table[i].used = 1;
@@ -48,8 +48,7 @@ int sys_read(fs_t *fs, fd_t *fd_table, int fd, void *buf, uint32_t size) {
         return -1;  // 写-only 文件不能读
 
     // 计算要读的位置
-    uint32_t read_offset = f->offset;
-    int ret = bread(&fs, f->ic, buf, size, 0);
+    int ret = bread(fs, f->ic, buf, size, f->offset);
     if (ret >= 0) 
         f->offset += ret;
     return ret;
@@ -69,9 +68,9 @@ int sys_write(fs_t *fs, fd_t *fd_table, int fd, const void *buf, uint32_t size) 
     if (f->flags & O_APPEND)
         f->offset = f->ic->inode.size;
 
-    int ret = bwrite(&fs, f->ic, buf, size, 0);
+    int ret = bwrite(fs, f->ic, buf, size, f->offset, 1);
     if (ret >= 0) 
-        f->offset = ret;
+        f->offset += ret;
     return ret;
 }
 
@@ -81,7 +80,7 @@ int sys_close(fs_t *fs, fd_t *fd_table, int fd) {
         return -1;
 
     fd_t *f = &fd_table[fd];
-    iput(&fs, &f->ic);
+    iput(fs, &f->ic);
     f->used = 0;
     return 0;
 }

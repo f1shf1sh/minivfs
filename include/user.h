@@ -20,5 +20,7 @@ int my_open(const char *pathname, int flags);
 int my_read(int fd, void *buf, uint32_t size);
 int my_write(int fd, const void *buf, uint32_t size);
 int my_close(int fd);
+int my_unlink(int fd, const char *path, int flags);
+
 int my_mount(const char *image, const char *target);
 int my_umount(const char *target);
