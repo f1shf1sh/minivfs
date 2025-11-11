@@ -164,7 +164,7 @@ int dir_remove(fs_t *fs, icache_t *dir_ic, const char *name) {
                     }
 
                     if (target_ic->inode.direct[NDIRECT] && target_ic->indirect) {
-                        for (int idx = 0; idx < BSIZE / sizeof(uint32_t); idx++) {
+                        for (uint32_t idx = 0; idx < BSIZE / sizeof(uint32_t); idx++) {
                             if (target_ic->indirect[idx])
                                 bfree(fs, target_ic->indirect[idx]);
                         }
@@ -173,7 +173,7 @@ int dir_remove(fs_t *fs, icache_t *dir_ic, const char *name) {
 
                     ifree(fs, target_inum);  // 回收 inode 号
                     target_ic->inode.size = 0;
-                    iput(fs, &target_ic);    // 写回并释放缓存
+                    iput(fs, target_ic);    // 写回并释放缓存
                 }
 
                 free(buf);
@@ -203,13 +203,19 @@ int dir_list(fs_t *fs, icache_t *dir_ino) {
         return -1; 
     }
 
+    printf("Name\t\t\tSize (bytes)\n");
+    printf("---------------------------\n");
+
     while (offset < dir_size) {
         int r = bread(fs, dir_ino, buf, BSIZE, offset);
         if (r <= 0) break;
         int entries = r / sizeof(dirent_t);
         for (int i = 0; i < entries; i++) {
             if (buf[i].inum != 0) {
-                printf("%s -> inum: %d\n", buf[i].name, buf[i].inum);
+                icache_t *f;
+                iget(fs, buf[i].inum, &f);
+                printf("%-10s\t0x%x\n", buf[i].name,f->inode.size);
+                iput(fs, f);
             }
         }
         offset += BSIZE;

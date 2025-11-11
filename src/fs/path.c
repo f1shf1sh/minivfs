@@ -84,22 +84,22 @@ int path_resolve(fs_t *fs, const char *path, int create, icache_t **res_ic) {
             if (create && i == depth - 1) {
                 // 最后一个文件可创建
                 if (path_create(fs, cur_ic, components[i], TYPE_FILE, &next_inum) < 0) {
-                    iput(fs, &cur_ic);
+                    iput(fs, cur_ic);
                     return -1;
                 }
             } else {
-                iput(fs, &cur_ic);
+                iput(fs, cur_ic);
                 return -1;
             }
         }
 
         icache_t *next_ic = NULL;
         if (iget(fs, next_inum, &next_ic) < 0) {
-            iput(fs, &cur_ic);
+            iput(fs, cur_ic);
             return -1;
         }
 
-        iput(fs, &cur_ic);
+        iput(fs, cur_ic);
         cur_ic = next_ic;
     }
 

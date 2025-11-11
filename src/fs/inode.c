@@ -99,7 +99,6 @@ int iwrite(fs_t *fs, uint32_t inum, const icache_t *ic) {
     if (!fs || !ic) 
         return -1;
 
-    inode_t *ino = &ic->inode;
     int off = INODE_BLOCK(inum);
     int idx = INODE_OFFSET(inum);
     uint8_t *buf = malloc(BSIZE);
@@ -111,7 +110,7 @@ int iwrite(fs_t *fs, uint32_t inum, const icache_t *ic) {
         return -1;
     }
     
-    memcpy(buf+idx*sizeof(inode_t), ino, sizeof(inode_t));
+    memcpy(buf+idx*sizeof(inode_t), &ic->inode, sizeof(inode_t));
     fs->vdev->ops.write(fs->vdev->priv, buf, fs->sb.inode_start+off);
     free(buf);
 
@@ -127,7 +126,7 @@ int bget(fs_t *fs, icache_t *ic, uint32_t idx, int alloc) {
         uint32_t newblk = ic->inode.direct[idx];
         if (!newblk && alloc) {
             newblk = balloc(fs);
-            if (newblk != -1) {
+            if ((int)newblk != -1) {
                 ic->inode.direct[idx] = newblk;
                 ic->dirty = 1;
             }
@@ -141,7 +140,6 @@ int bget(fs_t *fs, icache_t *ic, uint32_t idx, int alloc) {
         if (indirect_blk == -1) {
             return -1;
         }
-        uint8_t zero_buf[BSIZE] = {0};
         ic->inode.direct[NDIRECT] = indirect_blk;
         ic->indirect = calloc(BSIZE, 1);
         ic->dirty = 1;
@@ -153,7 +151,7 @@ int bget(fs_t *fs, icache_t *ic, uint32_t idx, int alloc) {
     uint32_t blk = ic->indirect[idx];
     if (alloc && !blk) {
         uint32_t newblk = balloc(fs);
-        if (newblk != -1) {
+        if ((int)newblk != -1) {
             ic->indirect[idx] = newblk;
             return newblk;
         }

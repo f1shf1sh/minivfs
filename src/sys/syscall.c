@@ -80,7 +80,7 @@ int sys_close(fs_t *fs, fd_t *fd_table, int fd) {
         return -1;
 
     fd_t *f = &fd_table[fd];
-    iput(fs, &f->ic);
+    iput(fs, f->ic);
     f->used = 0;
     return 0;
 }
