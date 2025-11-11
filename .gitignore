@@ -1,0 +1,7 @@
+.vscode
+*.img
+*.o
+build
+bin
+tests
+*.bak
