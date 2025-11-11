@@ -39,7 +39,7 @@ int ialloc(fs_t *fs) {
     if (!fs)
         return -1;
     pthread_mutex_lock(&fs->inode_bitmap_lock);
-    for (int i = 0; i < fs->sb.inode_blocks * INODES_PER_BLOCK; i++) {
+    for (uint32_t i = 0; i < fs->sb.inode_blocks * INODES_PER_BLOCK; i++) {
         if (!BIT_TST(fs->inode_bitmap, i)) {
             BIT_SET(fs->inode_bitmap, i);
             pthread_mutex_unlock(&fs->inode_bitmap_lock);
@@ -60,31 +60,46 @@ int ifree(fs_t *fs, uint32_t inum) {
 }
 
 // 读取inode节点信息
-int iread(fs_t *fs, uint32_t inum, inode_t *ino) {
-    if (!fs || !ino) 
+int iread(fs_t *fs, uint32_t inum, icache_t *ic) {
+    if (!fs || !ic) 
         return -1;
     
+    inode_t *ino = &ic->inode; 
     int off = INODE_BLOCK(inum);
     int idx = INODE_OFFSET(inum);
-    uint8_t *buf = malloc(BSIZE);
+
+    uint8_t *buf = calloc(1, BSIZE);
     if (!buf)
         return -1;
+    
     int r = fs->vdev->ops.read(fs->vdev->priv, buf, fs->sb.inode_start+off);
     if (r) {
         free(buf);
         return -1;
     }
-    memcpy(ino, buf + idx*sizeof(inode_t), sizeof(inode_t));
 
+    memcpy(ino, buf + idx*sizeof(inode_t), sizeof(inode_t));
     free(buf);
+
+    if (ino->direct[NDIRECT]) {
+        ic->indirect = calloc(1, BSIZE);
+        if (!ic->indirect) {
+            return -1;
+        }
+        fs->vdev->ops.read(fs->vdev->priv, ic->indirect, fs->sb.data_start+ino->direct[NDIRECT]);
+    } else {
+        ic->indirect = NULL;
+    }
+
     return 0;
 }
 
 // 写回inode节点信息
-int iwrite(fs_t *fs, uint32_t inum, const inode_t *ino) {
-    if (!fs || !ino) 
+int iwrite(fs_t *fs, uint32_t inum, const icache_t *ic) {
+    if (!fs || !ic) 
         return -1;
 
+    inode_t *ino = &ic->inode;
     int off = INODE_BLOCK(inum);
     int idx = INODE_OFFSET(inum);
     uint8_t *buf = malloc(BSIZE);
@@ -100,64 +115,51 @@ int iwrite(fs_t *fs, uint32_t inum, const inode_t *ino) {
     fs->vdev->ops.write(fs->vdev->priv, buf, fs->sb.inode_start+off);
     free(buf);
 
+    if (ic->inode.direct[NDIRECT]) {
+        fs->vdev->ops.write(fs->vdev->priv, ic->indirect, fs->sb.data_start+ic->inode.direct[NDIRECT]);
+    }
+
     return 0;
 }
 
 int bget(fs_t *fs, icache_t *ic, uint32_t idx, int alloc) {
-    int blkno = 0;
-
-    // if (alloc)
-    //     pthread_rwlock_wrlock(&ic->lock);
-    // else
-    //     pthread_rwlock_rdlock(&ic->lock);
-
-    if (idx < INODE_NDIRECT) {
-        blkno = ic->inode.direct[idx];
-        if (!blkno && alloc) {
-            blkno = balloc(fs);
-            if (blkno != -1) {
-                ic->inode.direct[idx] = blkno;
+    if (idx < NDIRECT) {
+        uint32_t newblk = ic->inode.direct[idx];
+        if (!newblk && alloc) {
+            newblk = balloc(fs);
+            if (newblk != -1) {
+                ic->inode.direct[idx] = newblk;
                 ic->dirty = 1;
             }
         }
-        // pthread_rwlock_unlock(&ic->lock);
-        return blkno;
+        return newblk;
     }
 
-    idx -= INODE_NDIRECT;
-    if (!ic->inode.direct[INODE_NDIRECT+1] && alloc) {
+    idx -= NDIRECT;
+    if (!ic->inode.direct[NDIRECT] && alloc) {
         int indirect_blk = balloc(fs);
         if (indirect_blk == -1) {
-            // pthread_rwlock_unlock(&ic->lock);
             return -1;
         }
         uint8_t zero_buf[BSIZE] = {0};
-        fs->vdev->ops.write(fs->vdev->priv, zero_buf, indirect_blk);
-        ic->inode.direct[INODE_NDIRECT+1] = indirect_blk;
+        ic->inode.direct[NDIRECT] = indirect_blk;
+        ic->indirect = calloc(BSIZE, 1);
         ic->dirty = 1;
     }
 
-    // pthread_rwlock_unlock(&ic->lock);
-
-    if (!ic->inode.direct[INODE_NDIRECT+1])
+    if (!ic->inode.direct[NDIRECT] || !ic->indirect)
         return 0;
 
-    uint32_t *table = malloc(BSIZE);
-    if (!table)
-        return -1;
-    fs->vdev->ops.read(fs->vdev->priv, table, ic->inode.direct[INODE_NDIRECT+1]);
-    blkno = table[idx];
-
-    if (!blkno && alloc) {
-        blkno = balloc(fs);
-        if (blkno != -1) {
-            table[idx] = blkno;
-            fs->vdev->ops.write(fs->vdev->priv, table, ic->inode.direct[INODE_NDIRECT+1]);
+    uint32_t blk = ic->indirect[idx];
+    if (alloc && !blk) {
+        uint32_t newblk = balloc(fs);
+        if (newblk != -1) {
+            ic->indirect[idx] = newblk;
+            return newblk;
         }
     }
 
-    free(table);
-    return blkno;
+    return blk;
 }
 
 /*
@@ -169,11 +171,8 @@ int bread(fs_t *fs, icache_t *ic, void *buf, uint32_t size, uint32_t offset) {
      if (!fs || !ic || !buf)
         return -1;
 
-    // pthread_rwlock_rdlock(&ic->lock);
-
     if (offset >= ic->inode.size) {
-        // pthread_rwlock_unlock(&ic->lock);
-        return 0; // EOF
+        return 0; 
     }
 
     if (offset + size > ic->inode.size)
@@ -191,9 +190,7 @@ int bread(fs_t *fs, icache_t *ic, void *buf, uint32_t size, uint32_t offset) {
         if (blkno <= 0)
             break;
 
-        if (fs->vdev->ops.read(fs->vdev->priv, blkbuf, fs->sb.data_start+blkno))
-            break;
-
+        fs->vdev->ops.read(fs->vdev->priv, blkbuf, fs->sb.data_start+blkno);
         uint32_t to_copy = MIN(BSIZE - block_off, remain);
         memcpy(p, blkbuf + block_off, to_copy);
 
@@ -203,7 +200,6 @@ int bread(fs_t *fs, icache_t *ic, void *buf, uint32_t size, uint32_t offset) {
         block_off = 0;
     }
 
-    // pthread_rwlock_unlock(&ic->lock);
     return size - remain;
 }
 
@@ -212,7 +208,7 @@ int bread(fs_t *fs, icache_t *ic, void *buf, uint32_t size, uint32_t offset) {
     size: user data buf size
     offset: disk data blk offset
 */
-int bwrite(fs_t *fs, icache_t *ic, const void *buf, uint32_t size, uint32_t offset) {
+int bwrite(fs_t *fs, icache_t *ic, const void *buf, uint32_t size, uint32_t offset, int updata) {
     if (!fs || !ic || !buf)
         return -1;
 
@@ -233,7 +229,7 @@ int bwrite(fs_t *fs, icache_t *ic, const void *buf, uint32_t size, uint32_t offs
         if (fs->vdev->ops.read(fs->vdev->priv, blkbuf, fs->sb.data_start+blkno))
             break;
 
-        uint32_t to_copy = MIN(BSIZE - (int)block_off, (int)remain);
+        uint32_t to_copy = MIN(BSIZE - block_off, remain);
         memcpy(blkbuf + block_off, p, to_copy);
         fs->vdev->ops.write(fs->vdev->priv, blkbuf, fs->sb.data_start+blkno);
 
@@ -244,55 +240,51 @@ int bwrite(fs_t *fs, icache_t *ic, const void *buf, uint32_t size, uint32_t offs
     }
 
     uint32_t new_size = offset + size;
-    if (new_size > ic->inode.size)
+    if (new_size > ic->inode.size && updata)
         ic->inode.size = new_size;
 
-    // pthread_rwlock_unlock(&ic->lock);
     return size - remain;
 }
 
 int iget(fs_t *fs, uint32_t inum, icache_t **ic) {
     uint32_t h = ICACHE_HASH(inum);
 
-    // pthread_mutex_lock(&fs->cache_mgr.lock);
     // 线性探测
     for (int i = 0; i < ICACHE_SIZE; i++) {
         uint32_t idx = (h + i) % ICACHE_SIZE;
         icache_t *slot = &fs->cache_mgr.slots[idx];
-
         if (slot->inum == inum) { // 命中缓存
             slot->refcnt++;
             *ic = slot;
-            // pthread_mutex_unlock(&fs->cache_mgr.lock);
             return 0;
         }
 
         if (slot->inum == 0) { // 空位，分配新缓存
-            if (iread(fs, inum, &slot->inode) != 0) {
-                // pthread_mutex_unlock(&fs->cache_mgr.lock);
+            if (iread(fs, inum, slot) != 0) {
                 return -1;
             }
-
             slot->inum = inum;
             slot->refcnt = 1;
             slot->dirty = 0;
             *ic = slot;
-            // pthread_mutex_unlock(&fs->cache_mgr.lock);
             return 0;
         }
     }
 
-    // pthread_mutex_unlock(&fs->cache_mgr.lock);
     return -1;
 }
 
-int iput(fs_t *fs, icache_t **ic) {
-    // pthread_mutex_lock(&fs->cache_mgr.lock);
-    (*ic)->refcnt--;
-    if ((*ic)->refcnt == 0 && (*ic)->dirty) {
-        iwrite(fs, (*ic)->inum, &(*ic)->inode);
-        (*ic)->dirty = 0;
+int iput(fs_t *fs, icache_t *ic) {
+    if (!ic) 
+        return -1;
+    
+    ic->refcnt--;
+    if (ic->refcnt > 0)
+        return 0;
+
+    if (ic->dirty) {
+        iwrite(fs, ic->inum, ic); 
+        ic->dirty = 0;
     }
-    // pthread_mutex_unlock(&fs->cache_mgr.lock);
     return 0;
 }

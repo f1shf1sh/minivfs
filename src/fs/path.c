@@ -14,7 +14,8 @@ static void skip_slash(const char **p) {
 int path_split(const char *path, char *parent, char *name) {
     if (!path || !parent || !name) return -1;
     size_t len = strlen(path);
-    if (len == 0) return -1;
+    if (len == 0) 
+        return -1;
 
     const char *slash = strrchr(path, '/');
     if (!slash) {
@@ -109,7 +110,8 @@ int path_resolve(fs_t *fs, const char *path, int create, icache_t **res_ic) {
 // 获取父目录 inode
 int path_parent(fs_t *fs, const char *path, icache_t **parent_ic, char *child_name) {
     char parent[FILENAME_MAX];
-    if (path_split(path, parent, child_name) < 0) return -1;
+    if (path_split(path, parent, child_name) < 0) 
+        return -1;
     return path_resolve(fs, parent, 0, parent_ic);
 }
 
@@ -122,11 +124,12 @@ int path_lookup(fs_t *fs, icache_t *parent_ic, const char *name, uint32_t *res_i
 int path_create(fs_t *fs, icache_t *parent_ic, const char *name, uint32_t type, uint32_t *res_inum) {
     // 分配 inode
     uint32_t inum = ialloc(fs);
-    if (inum == 0) return -1;
+    if (inum == 0) 
+        return -1;
 
-    inode_t ino = {0};
-    ino.type = type;
-    if (iwrite(fs, inum, &ino) < 0) 
+    icache_t c = {0};
+    c.inode.type = type;
+    if (iwrite(fs, inum, &c) < 0) 
         return -1;
 
     if (dir_add(fs, parent_ic, name, inum) < 0) {

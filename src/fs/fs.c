@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "fs/fs.h"
@@ -71,18 +72,26 @@ int fs_mount(fs_t *fs, vdev_t *vdev, uint32_t icache_size) {
     // init cwd
     fs->root_inum = 1;
     fs->cwd_inum = ROOT_INODE;
-    printf("[fs init] init fs cxt\n");
+    printf("[file system] init fs cxt\n");
     return 0;
 }
 
 int fs_unmount(fs_t *fs) {
-    if (!fs) 
+    if (!fs) {
         return -1;
+    }
 
-    if (fs->inode_bitmap) 
+    if (fs_sync(fs) < 0) {
+        return -1;
+    }
+
+    if (fs->inode_bitmap) {
         free(fs->inode_bitmap);
-    if (fs->data_bitmap)
+    }
+
+    if (fs->data_bitmap) {
         free(fs->data_bitmap);
+    }
 
     // destroy icache lock
     for (uint32_t i = 0 ; i < fs->icache_size; i++) {
@@ -96,17 +105,18 @@ int fs_unmount(fs_t *fs) {
     pthread_mutex_destroy(&fs->data_bitmap_lock);
    
     free(fs->vdev->priv);
-    return fs_sync(fs);
+    return 0;
 }
 
 int fs_sync(fs_t *fs) {
     if(!fs)
         return -1;
+    
     pthread_mutex_lock(&fs->fs_lock);
 
     // write inode bitmap
     for (uint32_t i = 0; i < fs->sb.inode_map_blocks; i++) {
-        if (!fs->vdev->ops.write(fs->vdev->priv, fs->inode_bitmap + i*BSIZE, fs->sb.inode_map_start+i)) {
+        if (fs->vdev->ops.write(fs->vdev->priv, fs->inode_bitmap + i*BSIZE, fs->sb.inode_map_start+i) != 0) {
             pthread_mutex_unlock(&fs->fs_lock);
             return -1;
         }
@@ -114,7 +124,7 @@ int fs_sync(fs_t *fs) {
 
     // write data bitmap
     for (uint32_t i = 0; i < fs->sb.data_map_blocks; i++) {
-        if (!fs->vdev->ops.write(fs->vdev->priv, fs->data_bitmap+i*BSIZE, fs->sb.data_map_start+i)) {
+        if (fs->vdev->ops.write(fs->vdev->priv, fs->data_bitmap+i*BSIZE, fs->sb.data_map_start+i) != 0) {
             pthread_mutex_unlock(&fs->fs_lock);
             return -1;
         }
@@ -124,8 +134,8 @@ int fs_sync(fs_t *fs) {
     for (uint32_t i = 0; i < fs->icache_size; i++) {
         icache_t *icache = &fs->cache_mgr.slots[i];
         pthread_rwlock_wrlock(&icache->lock);
-        if (icache->inum != (uint32_t)-1 && icache->dirty) {
-            if (iwrite(fs, icache->inum, &icache->inode)) {
+        if (icache->inum != 0 && icache->dirty == 1) {
+            if (iwrite(fs, icache->inum, icache)) {
                 pthread_rwlock_unlock(&icache->lock);
                 pthread_mutex_unlock(&fs->fs_lock);
                 return -1;
