@@ -16,7 +16,8 @@ CMD_DIR := src/cmd
 
 # 通用对象文件（不包含 shell 和测试）
 COMMON_OBJ := $(FS_DIR)/dir.o $(FS_DIR)/fs.o $(FS_DIR)/inode.o $(FS_DIR)/path.o \
-              $(SYS_DIR)/syscall.o $(USER_DIR)/user.o $(VDEV_DIR)/cache.o $(VDEV_DIR)/disk.o \
+              $(SYS_DIR)/syscall.o $(USER_DIR)/user.o $(VDEV_DIR)/disk.o \
+# 			  $(VDEV_DIR)/cache.o
 
 # cmd对象
 CMD_OBJ := $(CMD_DIR)/cmd_ls.o \
@@ -27,6 +28,8 @@ CMD_OBJ := $(CMD_DIR)/cmd_ls.o \
 		   $(CMD_DIR)/cmd_cp.o \
 		   $(CMD_DIR)/cmd_stressfs.o \
 		   $(CMD_DIR)/cmd_fdisk.o \
+		   $(CMD_DIR)/cmd_atomtest.o \
+		   $(CMD_DIR)/cmd_touch.o \
 		   $(CMD_DIR)/cmd_table.o
 
 # 工具对象

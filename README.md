@@ -1,57 +1,53 @@
-## 总体架构
-```
-┌──────────────────────────────┐
-│         文件系统层（FS）        │
-│  ├── inode / directory        │
-│  ├── metadata / journaling    │
-│  └── 提供文件接口给用户态        │
-└──────────────▲───────────────┘
-               │
-┌──────────────┴───────────────┐
-│        Block Manager 层      │
-│  ├── block 分配与回收（bitmap）│
-│  ├── 逻辑块号 ↔ 物理块号映射    │
-│  ├── 块缓存管理接口            │
-│  └── 依赖 cache_mgr           │
-└──────────────▲───────────────┘
-               │
-┌──────────────┴───────────────┐
-│          Cache 层            │
-│  ├── LRU 块缓存               │
-│  ├── 脏页写回机制              │
-│  ├── 异步同步（future）        │
-│  └── 调用 vdev 层             │
-└──────────────▲───────────────┘
-               │
-┌──────────────┴───────────────┐
-│         虚拟设备层（VDev）     │
-│  ├── 统一块设备接口 vdev_ops  │
-│  ├── 多设备注册表 vdev_table  │
-│  ├── 可挂载/卸载              │
-│  └── 设备抽象：disk / ramdisk │
-└──────────────▲───────────────┘
-               │
-┌──────────────┴───────────────┐
-│           Disk 层             │
-│  ├── 文件模拟磁盘 (file fd)   │
-│  ├── block 读写 / sync        │
-│  └── 注册为 VDev("disk")      │
-└──────────────────────────────┘
-```
-## 格式化结构
+# MiniVFS
 
-```
-+-------------------+---------------+
-|   Boot Block      |     Block 0   |
-+-------------------+---------------+
-|   Superblock      |     Block 1   |
-+-------------------+---------------+
-|     Log           |  Blocks 2-31  |
-+-------------------+---------------+
-|   Inode Blocks    | Blocks 32-47  |
-+-------------------+---------------+
-|   Bitmap Blocks   | Blocks 48-49  |
-+-------------------+---------------+
-|    Data Blocks    | Blocks 50-... |
-+-------------------+---------------+
-```
+MiniVFS is a lightweight virtual file system implemented in C, supporting basic file operations and multi-threaded stress testing. It is designed for educational and experimental purposes, demonstrating file system concepts, caching, and concurrency control.
+
+---
+
+## Features
+
+- Basic file system operations:
+  - `ls`, `cat`, `rm`, `cp`, `mkdir`, `touch`, `echo`
+- Supports **inode caching** and block caching
+- Multi-threaded file operations with **file-level locking**
+- Stress testing tool (`stressfs`) to evaluate system performance under concurrent operations
+- Observes CPU, memory, and disk usage
+
+---
+
+## File System API
+
+The project exposes a set of file system APIs for user-level commands:
+
+| Function | Description |
+|----------|-------------|
+| `my_open` | Open or create a file |
+| `my_close` | Close a file descriptor |
+| `my_read` | Read from a file |
+| `my_write` | Write to a file |
+| `cmd_ls` | List directory contents |
+| `cmd_cat` | Print file contents |
+| `cmd_rm` | Remove a file |
+| `cmd_cp` | Copy a file |
+| `cmd_stressfs` | Run multi-threaded stress test |
+
+> **Note:** APIs provide atomic operations, but thread safety is handled at the command layer using file locks.
+
+---
+
+## StressFS
+
+`stressfs` simulates concurrent file system activity using a single producer and multiple consumers:
+
+- Creates and operates on 50 files
+- Supports commands: `ls`, `cat`, `rm`, `cp`, `write`
+- Multi-threaded execution with configurable number of threads
+- File-level locks ensure read/write consistency
+- Prints CPU, memory, and disk usage periodically
+- Test duration can be set via CLI argument
+
+**Example Usage:**
+
+```bash
+# Run stress test for 12 hours (43200 seconds)
+./miniVFS stressfs 43200
