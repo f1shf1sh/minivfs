@@ -2,9 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "user.h"    // 你自己的文件系统接口，比如 my_open / my_write / my_read 等
+#include "user.h"   
 
-// 简单的CRC32实现
 static uint32_t crc32_table[256];
 
 static void init_crc32_table(void) {
@@ -25,9 +24,6 @@ static uint32_t crc32_update(uint32_t crc, const void *buf, size_t len) {
     return ~crc;
 }
 
-// =============================== //
-//        核心测试函数              //
-// =============================== //
 int cmd_usertest(int argc, char **argv) {
     int fd;
     char buf[BSIZE];
@@ -37,7 +33,7 @@ int cmd_usertest(int argc, char **argv) {
     double start, end;
 
     if (argc > 1) {
-        total_size = atol(argv[1]) * 1024 * 1024; // 可自定义大小（MB）
+        total_size = atol(argv[1]) * 1024 * 1024; 
     }
 
     init_crc32_table();
@@ -46,8 +42,6 @@ int cmd_usertest(int argc, char **argv) {
     printf("\n=== [UserTest] File System Stress Test ===\n");
     printf("Target: /a.txt, Size: %.2f MB\n", total_size / (1024.0 * 1024.0));
 
-    // 删除旧文件
-    // my_unlink("/a.txt");
 
     // 创建文件 /a.txt
     fd = my_open("/a.txt", O_CREAT | O_RDWR);
@@ -80,7 +74,7 @@ int cmd_usertest(int argc, char **argv) {
 
     my_close(fd);
 
-    // 3️⃣ 重新打开并读取校验
+    // 重新打开并读取校验
     fd = my_open("/a.txt", O_RDONLY);
     if (fd < 0) {
         printf("[Error] reopen /a.txt failed\n");
@@ -105,7 +99,7 @@ int cmd_usertest(int argc, char **argv) {
 
     my_close(fd);
 
-    // 4️⃣ 验证结果
+    // 验证结果
     if (write_crc == read_crc && written == readn) {
         printf("\n[PASS] CRC matched, data verified successfully.\n");
     } else {
