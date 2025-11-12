@@ -2,11 +2,12 @@
 
 #include <stdint.h>
 #include <sys/types.h>
-#include <pthread.h>
 
 #include "defs.h"
 #include "vdev.h"
 #include "disk.h"
+#include "spinlock.h"
+
 /*
 cache buffer layer
 cache use lru, the max cache block be defined in NBUF
@@ -16,39 +17,42 @@ cache use lru, the max cache block be defined in NBUF
 #define VALID 2
 #define NBUF 128 // size of cache block  
 
-typedef struct cache_block {
-    int dev_id;    // device id 
+typedef struct bcache {
     int block_no;  // block num in img, offset = block_no * block_size
     unsigned char data[BSIZE]; // block data
     unsigned char flags;     // have two type dirty and valid
     int refcnt;       
-    struct cache_block *prev; 
-    struct cache_block *next;
-    pthread_rwlock_t lock;
-} cache_block_t;
+    struct bcache *prev; 
+    struct bcache *next;
+    lock_t lock;
+} bcache_t;
 
-typedef struct cache_mgr {
-    cache_block_t blocks[NBUF];
+typedef struct bcache_mgr {
+    bcache_t blocks[NBUF];
     vdev_t *backend;
     vdev_t vdev;
-    cache_block_t *lru_head;
-    cache_block_t *lru_tail;
-    pthread_mutex_t lock;
-} cache_mgr_t;
+    bcache_t *lru_head;
+    bcache_t *lru_tail;
+} bcache_mgr_t;
 
-
-// LRU support 
-cache_block_t* lookup_block(cache_mgr_t *mgr, int dev_id, int block_no);
-void lru_append(cache_mgr_t *mgr, cache_block_t *blk);
-void lru_remove(cache_mgr_t *mgr, cache_block_t *blk);
-cache_block_t *evict_block(cache_mgr_t *mgr);
-
-
-// cache layer interface
-void cache_init(cache_mgr_t *mgr, vdev_t *dev, int dev_it);
-void cache_destroy(cache_mgr_t *mgr);
-int cache_sync(void *priv);
 
 int cread(void *priv, void *buf, unsigned int count);
 int cwrite(void *priv, const void *buf, unsigned int count);
+int csync(void *priv);
+int cget(bcache_mgr_t *mgr, int block_no, bcache_t **bc);
+int cput(bcache_mgr_t *mgr, bcache_t *bc);
+
+// LRU support 
+bcache_t* lookup_block(bcache_mgr_t *mgr, int dev_id, int block_no);
+void lru_append(bcache_mgr_t *mgr, bcache_t *blk);
+void lru_remove(bcache_mgr_t *mgr, bcache_t *blk);
+bcache_t *evict_block(bcache_mgr_t *mgr);
+
+
+// cache layer interface
+int cache_init(bcache_mgr_t *mgr, vdev_t *dev);
+int cache_destroy(bcache_mgr_t *mgr);
+
+
+
 
