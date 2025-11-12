@@ -5,6 +5,7 @@
 #include "defs.h"
 #include "vdev/vdev.h"
 #include "fs/inode.h"
+#include "spinlock.h"
 
 /*
         [ boot block | sb | log(ignore) | innode bitmap | inode blocks | free bit map | data blocks ]
@@ -78,8 +79,8 @@ typedef struct fs {
     uint32_t cwd_inum;
     
 
-    pthread_mutex_t inode_bitmap_lock; 
-    pthread_mutex_t data_bitmap_lock;
+    lock_t lock_bmap;
+    lock_t lock_imap;
     pthread_mutex_t fs_lock;
 }fs_t;
 

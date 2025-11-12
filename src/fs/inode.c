@@ -8,16 +8,17 @@
 int balloc(fs_t *fs) {
     if (!fs)
         return -1;
-    pthread_mutex_lock(&fs->data_bitmap_lock);
+    
+    lock_acquire(&fs->lock_bmap);
     for (uint32_t i = 0; i < fs->sb.data_blocks; i++) {
         if (!BIT_TST(fs->data_bitmap, i)) {
             BIT_SET(fs->data_bitmap, i);
-            pthread_mutex_unlock(&fs->data_bitmap_lock);
+            lock_release(&fs->lock_bmap);
             return i;
         }
     }
 
-    pthread_mutex_unlock(&fs->data_bitmap_lock);
+    lock_release(&fs->lock_bmap);
     return -1;
 }
 
@@ -28,9 +29,9 @@ int bfree(fs_t *fs, uint32_t blkno) {
     if (blkno < fs->sb.data_start || blkno > fs->sb.data_start + fs->sb.data_blocks) 
         return -1;
     
-    pthread_mutex_lock(&fs->data_bitmap_lock);
+    lock_acquire(&fs->lock_bmap);
     BIT_CLR(fs->data_bitmap, blkno);
-    pthread_mutex_unlock(&fs->data_bitmap_lock);
+    lock_release(&fs->lock_bmap);
 
     return 0;
 }
@@ -38,29 +39,34 @@ int bfree(fs_t *fs, uint32_t blkno) {
 int ialloc(fs_t *fs) {
     if (!fs)
         return -1;
-    pthread_mutex_lock(&fs->inode_bitmap_lock);
+    
+    lock_acquire(&fs->lock_imap);
     for (uint32_t i = 0; i < fs->sb.inode_blocks * INODES_PER_BLOCK; i++) {
         if (!BIT_TST(fs->inode_bitmap, i)) {
             BIT_SET(fs->inode_bitmap, i);
-            pthread_mutex_unlock(&fs->inode_bitmap_lock);
+            lock_release(&fs->lock_imap);
             return i;
         }
     }
-    pthread_mutex_unlock(&fs->inode_bitmap_lock);
+    
+    lock_release(&fs->lock_imap);
     return -1;
 }
 
 int ifree(fs_t *fs, uint32_t inum) {
-    if (!fs)
+    if (!fs || inum > fs->sb.inode_blocks)
         return -1;
-    pthread_mutex_lock(&fs->inode_bitmap_lock);
+    
+    lock_acquire(&fs->lock_imap);
     BIT_CLR(fs->inode_bitmap, inum);
-    pthread_mutex_unlock(&fs->inode_bitmap_lock);
+    lock_release(&fs->lock_imap);
     return 0;
 }
 
 // 读取inode节点信息
 int iread(fs_t *fs, uint32_t inum, icache_t *ic) {
+
+    lock_acquire(&ic->lock);
     if (!fs || !ic) 
         return -1;
     
@@ -69,12 +75,14 @@ int iread(fs_t *fs, uint32_t inum, icache_t *ic) {
     int idx = INODE_OFFSET(inum);
 
     uint8_t *buf = calloc(1, BSIZE);
-    if (!buf)
+    if (!buf) {
+        lock_release(&ic->lock);
         return -1;
-    
+    }
     int r = fs->vdev->ops.read(fs->vdev->priv, buf, fs->sb.inode_start+off);
     if (r) {
         free(buf);
+        lock_release(&ic->lock);
         return -1;
     }
 
@@ -84,6 +92,7 @@ int iread(fs_t *fs, uint32_t inum, icache_t *ic) {
     if (ino->direct[NDIRECT]) {
         ic->indirect = calloc(1, BSIZE);
         if (!ic->indirect) {
+            lock_release(&ic->lock);
             return -1;
         }
         fs->vdev->ops.read(fs->vdev->priv, ic->indirect, fs->sb.data_start+ino->direct[NDIRECT]);
@@ -91,6 +100,7 @@ int iread(fs_t *fs, uint32_t inum, icache_t *ic) {
         ic->indirect = NULL;
     }
 
+    lock_release(&ic->lock);
     return 0;
 }
 
@@ -99,14 +109,18 @@ int iwrite(fs_t *fs, uint32_t inum, const icache_t *ic) {
     if (!fs || !ic) 
         return -1;
 
+    lock_acquire(&ic->lock);
     int off = INODE_BLOCK(inum);
     int idx = INODE_OFFSET(inum);
     uint8_t *buf = malloc(BSIZE);
-    if (!buf)
+    if (!buf) {
         return -1;
+        lock_release(&ic->lock);
+    }
     int r = fs->vdev->ops.read(fs->vdev->priv, buf, fs->sb.inode_start+off);
     if (r) {
         free(buf);
+        lock_release(&ic->lock);
         return -1;
     }
     
@@ -118,6 +132,7 @@ int iwrite(fs_t *fs, uint32_t inum, const icache_t *ic) {
         fs->vdev->ops.write(fs->vdev->priv, ic->indirect, fs->sb.data_start+ic->inode.direct[NDIRECT]);
     }
 
+    lock_release(&ic->lock);
     return 0;
 }
 
@@ -141,7 +156,7 @@ int bget(fs_t *fs, icache_t *ic, uint32_t idx, int alloc) {
             return -1;
         }
         ic->inode.direct[NDIRECT] = indirect_blk;
-        ic->indirect = calloc(BSIZE, 1);
+        ic->indirect = calloc(1, BSIZE);
         ic->dirty = 1;
     }
 
@@ -169,7 +184,9 @@ int bread(fs_t *fs, icache_t *ic, void *buf, uint32_t size, uint32_t offset) {
      if (!fs || !ic || !buf)
         return -1;
 
+    lock_acquire(&ic->lock);
     if (offset >= ic->inode.size) {
+        lock_release(&ic->lock);
         return 0; 
     }
 
@@ -198,6 +215,7 @@ int bread(fs_t *fs, icache_t *ic, void *buf, uint32_t size, uint32_t offset) {
         block_off = 0;
     }
 
+    lock_release(&ic->lock);
     return size - remain;
 }
 
@@ -276,13 +294,12 @@ int iput(fs_t *fs, icache_t *ic) {
     if (!ic) 
         return -1;
     
+    lock_acquire(&ic->lock);
     ic->refcnt--;
+    lock_release(&ic->lock);
+
     if (ic->refcnt > 0)
         return 0;
 
-    if (ic->dirty) {
-        iwrite(fs, ic->inum, ic); 
-        ic->dirty = 0;
-    }
     return 0;
 }

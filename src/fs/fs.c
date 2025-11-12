@@ -1,7 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include "fs/fs.h"
+#include "spinlock.h"
+
 /*
     return 0 is success, -1 is fail
 */
@@ -58,14 +61,14 @@ int fs_mount(fs_t *fs, vdev_t *vdev, uint32_t icache_size) {
     }
 
     // init mutex lock
-    pthread_mutex_init(&fs->inode_bitmap_lock, NULL);
-    pthread_mutex_init(&fs->data_bitmap_lock, NULL);
+    lock_init(&fs->lock_bmap);
+    lock_init(&fs->lock_imap);
     pthread_mutex_init(&fs->fs_lock, NULL);
 
 
     // init inode cache
     for (uint32_t i = 0; i < fs->icache_size; i++) {
-        pthread_rwlock_init(&fs->cache_mgr.slots[i].lock, NULL);
+        lock_init(&fs->cache_mgr.slots[i].lock);
     }
     pthread_mutex_init(&fs->cache_mgr.lock, NULL);
     
@@ -93,16 +96,9 @@ int fs_unmount(fs_t *fs) {
         free(fs->data_bitmap);
     }
 
-    // destroy icache lock
-    for (uint32_t i = 0 ; i < fs->icache_size; i++) {
-        pthread_rwlock_destroy(&fs->cache_mgr.slots[i].lock);
-    }
-    pthread_mutex_destroy(&fs->cache_mgr.lock);
 
-    // destroy fs context lock
+    pthread_mutex_destroy(&fs->cache_mgr.lock);
     pthread_mutex_destroy(&fs->fs_lock);
-    pthread_mutex_destroy(&fs->inode_bitmap_lock);
-    pthread_mutex_destroy(&fs->data_bitmap_lock);
    
     free(fs->vdev->priv);
     return 0;
@@ -111,13 +107,10 @@ int fs_unmount(fs_t *fs) {
 int fs_sync(fs_t *fs) {
     if(!fs)
         return -1;
-    
-    pthread_mutex_lock(&fs->fs_lock);
 
     // write inode bitmap
     for (uint32_t i = 0; i < fs->sb.inode_map_blocks; i++) {
         if (fs->vdev->ops.write(fs->vdev->priv, fs->inode_bitmap + i*BSIZE, fs->sb.inode_map_start+i) != 0) {
-            pthread_mutex_unlock(&fs->fs_lock);
             return -1;
         }
     }
@@ -125,7 +118,6 @@ int fs_sync(fs_t *fs) {
     // write data bitmap
     for (uint32_t i = 0; i < fs->sb.data_map_blocks; i++) {
         if (fs->vdev->ops.write(fs->vdev->priv, fs->data_bitmap+i*BSIZE, fs->sb.data_map_start+i) != 0) {
-            pthread_mutex_unlock(&fs->fs_lock);
             return -1;
         }
     }
@@ -133,16 +125,12 @@ int fs_sync(fs_t *fs) {
     // write inode cache into memory
     for (uint32_t i = 0; i < fs->icache_size; i++) {
         icache_t *icache = &fs->cache_mgr.slots[i];
-        pthread_rwlock_wrlock(&icache->lock);
         if (icache->inum != 0 && icache->dirty == 1) {
             if (iwrite(fs, icache->inum, icache)) {
-                pthread_rwlock_unlock(&icache->lock);
-                pthread_mutex_unlock(&fs->fs_lock);
                 return -1;
             }
             icache->dirty = 0;
         }
-        pthread_rwlock_unlock(&icache->lock);
     }
 
     // write superblock
@@ -153,6 +141,5 @@ int fs_sync(fs_t *fs) {
         fs->vdev->ops.sync(fs->vdev->priv);
     }
 
-    pthread_mutex_unlock(&fs->fs_lock);
     return 0;
 }

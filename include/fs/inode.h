@@ -1,8 +1,8 @@
 #pragma once
 
-// #include "fs.h"
 #include <pthread.h>
 #include <stdint.h>
+#include "spinlock.h"
 
 #define INODE_SIZE 128
 #define NDIRECT 12
@@ -35,7 +35,7 @@ typedef struct icache {
     uint32_t *indirect;
     int refcnt;
     int dirty;
-    pthread_rwlock_t lock;
+    lock_t lock;
 } icache_t;
 
 typedef struct icache_mgr {

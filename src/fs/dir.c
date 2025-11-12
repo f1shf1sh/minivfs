@@ -4,8 +4,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-/* ======= 目录操作 ======= */
-/* helper: compare name safely */
+
+
 static int name_eq(const char *a, const char *b) {
     return strncmp(a, b, FILENAME_MAX_LEN) == 0;
 }
@@ -15,16 +15,12 @@ int dir_lookup(fs_t *fs, icache_t *dir_ic, const char *name) {
     if (!fs || !dir_ic || !name) 
         return -1;
 
-    /* 目录操作用 inode 的读锁 */
-    if (pthread_rwlock_rdlock(&dir_ic->lock) != 0) 
-        return -1;
 
     uint32_t dir_size = dir_ic->inode.size;
     uint32_t offset = 0;
     dirent_t *buf = malloc(BSIZE);
 
     if (!buf) {
-        pthread_rwlock_unlock(&dir_ic->lock);
         return -1;
     }
 
@@ -37,7 +33,6 @@ int dir_lookup(fs_t *fs, icache_t *dir_ic, const char *name) {
             if (buf[i].inum != 0 && name_eq(buf[i].name, name)) {
                 uint32_t found = buf[i].inum;
                 free(buf);
-                pthread_rwlock_unlock(&dir_ic->lock);
                 return (int)found;
             }
         }
@@ -46,7 +41,6 @@ int dir_lookup(fs_t *fs, icache_t *dir_ic, const char *name) {
 
     dir_ic->dirty = 1;
     free(buf);
-    pthread_rwlock_unlock(&dir_ic->lock);
     return -1;
 }
 
@@ -57,15 +51,11 @@ int dir_add(fs_t *fs, icache_t *dir_ic, const char *name, uint32_t inum) {
     if (strlen(name) >= FILENAME_MAX_LEN) 
         return -1;
 
-    /* 目录写操作需独占 */
-    if (pthread_rwlock_wrlock(&dir_ic->lock) != 0) 
-        return -1;
 
     uint32_t dir_size = dir_ic->inode.size;
     uint32_t offset = 0;
     dirent_t *buf = malloc(BSIZE);
     if (!buf) { 
-        pthread_rwlock_unlock(&dir_ic->lock); 
         return -1; 
     }
 
@@ -77,7 +67,6 @@ int dir_add(fs_t *fs, icache_t *dir_ic, const char *name, uint32_t inum) {
         int r = bread(fs, dir_ic, buf, BSIZE, offset);
         if (r < 0) { 
             free(buf); 
-            pthread_rwlock_unlock(&dir_ic->lock); 
             return -1; 
         }
 
@@ -102,7 +91,6 @@ int dir_add(fs_t *fs, icache_t *dir_ic, const char *name, uint32_t inum) {
 
     if (found_dup) {
         free(buf);
-        pthread_rwlock_unlock(&dir_ic->lock);
         return -1;
     }
 
@@ -119,13 +107,11 @@ int dir_add(fs_t *fs, icache_t *dir_ic, const char *name, uint32_t inum) {
     /* write into slot (可能是在已有块内也可能是新块) */
     if (bwrite(fs, dir_ic, &entry, sizeof(entry), slot_offset, 1) < 0) {
         free(buf);
-        pthread_rwlock_unlock(&dir_ic->lock);
         return -1;
     } 
 
     dir_ic->dirty = 1;
     free(buf);
-    pthread_rwlock_unlock(&dir_ic->lock);
     return 0;
 }
 
@@ -192,18 +178,15 @@ int dir_remove(fs_t *fs, icache_t *dir_ic, const char *name) {
 int dir_list(fs_t *fs, icache_t *dir_ino) {
     if (!fs || !dir_ino) 
         return -1;
-    if (pthread_rwlock_rdlock(&dir_ino->lock) != 0) 
-        return -1;
 
     uint32_t dir_size = dir_ino->inode.size;
     uint32_t offset = 0;
     dirent_t *buf = malloc(BSIZE);
     if (!buf) { 
-        pthread_rwlock_unlock(&dir_ino->lock); 
         return -1; 
     }
 
-    printf("Name\t\t\tSize (bytes)\n");
+    printf("Name\t\tSize (bytes)\n");
     printf("---------------------------\n");
 
     while (offset < dir_size) {
@@ -222,6 +205,5 @@ int dir_list(fs_t *fs, icache_t *dir_ino) {
     }
 
     free(buf);
-    pthread_rwlock_unlock(&dir_ino->lock);
     return 0;
 }
