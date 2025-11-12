@@ -45,7 +45,7 @@ static void add_dir_entry(FILE *disk, uint32_t data_start, uint32_t offset, uint
 
     dirent_t de;
     de.inum = inum;
-    strcpy(de.name, name);
+    strncpy(de.name, name, FILENAME_MAX_LEN - 1);
 
     // 写入空闲位置
     memcpy(buf + (off_in_blk)*sizeof(dirent_t), &de, sizeof(dirent_t));
@@ -157,11 +157,11 @@ int main(int argc, char *argv[]) {
 
     const char *execs[] = { "ls","rm","cat","cp","cd", \
                             "mkdir","touch","echo","fdisk", \
-                            "usertest","stressfs"};
+                            "usertest","stressfs", "atomtest"};
     uint32_t next_inode = ROOT_INODE + 1; // next free inode
     uint32_t next_dir_offset = root.size; // append after "." and ".."
 
-    for (int i = 0; i < 11; i++) {
+    for (int i = 0; i < 12; i++) {
         // Create inode
         inode_t ino; 
         ino.type = TYPE_FILE;
