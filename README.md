@@ -37,17 +37,3 @@ The project exposes a set of file system APIs for user-level commands:
 
 ## StressFS
 
-`stressfs` simulates concurrent file system activity using a single producer and multiple consumers:
-
-- Creates and operates on 50 files
-- Supports commands: `ls`, `cat`, `rm`, `cp`, `write`
-- Multi-threaded execution with configurable number of threads
-- File-level locks ensure read/write consistency
-- Prints CPU, memory, and disk usage periodically
-- Test duration can be set via CLI argument
-
-**Example Usage:**
-
-```bash
-# Run stress test for 12 hours (43200 seconds)
-./miniVFS stressfs 43200
