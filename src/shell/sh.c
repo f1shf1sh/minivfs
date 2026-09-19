@@ -1,107 +1,120 @@
+#include "cmd.h"
+#include "user.h"
+#include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
+#include <unistd.h>
 
-#include "user.h"     // 包含 my_mount, my_umount, my_open 等// command_table
-#include "cmd.h"      // 命令函数声明
+#define MAX_CMD 1024
+#define MAX_ARGS 32
 
-#define MAX_CMD 128
-#define MAX_ARGS 8
+static volatile sig_atomic_t interrupted;
 
-void sigHandle(int sig)
-{
-    switch (sig) {
-    case SIGINT:
-        int r = my_umount("/");
-        if (r < 0) {
-            printf("unmount fail\n");
-        }
-		printf("Bye!!!\n");
-        break;
-    }
-    exit(0); //调用exit退出程序，会被捕获该事件，从而触发进程退出处理的回调函数
+static void handle_sigint(int signal_number) {
+    (void)signal_number;
+    interrupted = 1;
 }
 
-// shell 循环
-void sh_loop(void) {
-    char line[MAX_CMD];
-    char *argv[MAX_ARGS];
+static int sh_loop(void) {
+    char *line = NULL;
+    size_t capacity = 0;
+    int result = 0;
+    int interactive = isatty(STDIN_FILENO);
+    while (!interrupted) {
+        if (interactive) {
+            fputs("$ ", stdout);
+            fflush(stdout);
+        }
+        errno = 0;
+        ssize_t length = getline(&line, &capacity, stdin);
+        if (length < 0) {
+            if (ferror(stdin) && !interrupted) {
+                perror("shell: input");
+                result = 1;
+            }
+            break;
+        }
+        if (interrupted)
+            break;
+        if (length > MAX_CMD) {
+            fprintf(stderr, "shell: command exceeds %u bytes\n", MAX_CMD);
+            result = 1;
+            continue;
+        }
 
-    while (1) {
-        printf("$ ");
-        if (!fgets(line, sizeof(line), stdin)) break;
-
-        // 去掉换行
-        size_t len = strlen(line);
-        if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
-
-        // 分词
+        char *argv[MAX_ARGS + 1];
         int argc = 0;
-        char *token = strtok(line, " \t");
+        char *saveptr;
+        char *token = strtok_r(line, " \t\r\n", &saveptr);
         while (token && argc < MAX_ARGS) {
             argv[argc++] = token;
-            token = strtok(NULL, " \t");
+            token = strtok_r(NULL, " \t\r\n", &saveptr);
         }
-        if (argc == 0) 
+        argv[argc] = NULL;
+        if (token) {
+            fprintf(stderr, "shell: too many arguments\n");
+            result = 1;
             continue;
-
-        // 查找命令表执行
-        int found = 0;
-        for (int i = 0; command_table[i].name != NULL; i++) {
-
-            if (strcmp(argv[0], command_table[i].name) == 0) {
-                command_table[i].func(argc, argv);
-                found = 1;
-                break;
-            }
         }
-        if (!found) {
-            printf("Unknown command: %s\n", argv[0]);
+        if (!argc)
+            continue;
+        if (strcmp(argv[0], "exit") == 0) {
+            if (argc == 1)
+                break;
+            fprintf(stderr, "Usage: exit\n");
+            result = 1;
+            continue;
+        }
+        if (strcmp(argv[0], "sync") == 0) {
+            if (argc != 1) {
+                fprintf(stderr, "Usage: sync\n");
+                result = 1;
+            } else if (my_sync() < 0) {
+                perror("sync");
+                result = 1;
+            }
+            continue;
+        }
+
+        const command_t *command = command_table;
+        while (command->name && strcmp(command->name, argv[0]) != 0)
+            command++;
+        if (!command->name) {
+            fprintf(stderr, "Unknown command: %s\n", argv[0]);
+            result = 1;
+        } else if (command->func(argc, argv) < 0) {
+            result = 1;
         }
     }
+    free(line);
+    return interrupted ? 130 : result;
 }
-
-int init(const char *disk_path) {
-    if (!disk_path) 
-        return -1;
-
-    // 1. 打开磁盘文件
-
-    my_mount(disk_path, "/");
-    // 3. 设置根目录为当前工作目录
-    printf("[shell init] mounted %s to / successfully\n", disk_path);
-    return 0;
-}
-
-
-ctx_t ctx;
 
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        printf("Usage: %s <disk image path>\n", argv[0]);
-        // return -1;
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <disk image path>\n", argv[0]);
+        return 1;
     }
-
-    signal(SIGINT, sigHandle);  //Ctrl + C
-
-    // const char *img_path = argv[1];
-    const char *img_path = "../disk.img";
-
-    // 初始化文件系统，将镜像挂载到 "/"
-    if (init(img_path) < 0) {
-        printf("Failed to initialize filesystem from %s\n", img_path);
-        return -1;
+    struct sigaction action = {0};
+    action.sa_handler = handle_sigint;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGINT, &action, NULL) < 0) {
+        perror("shell: sigaction");
+        return 1;
     }
-
-    // 进入 shell 循环
-    sh_loop();
-
-    // shell 退出后卸载根文件系统
+    if (my_mount(argv[1], "/") < 0) {
+        perror("shell: mount");
+        return 1;
+    }
+    /* Commands join their workers before returning, so teardown runs alone. */
+    int result = sh_loop();
     if (my_umount("/") < 0) {
-        printf("Failed to unmount filesystem\n");
-        return -1;
+        perror("shell: unmount");
+        result = 1;
     }
-
-    return 0;
+    if (fflush(stdout) == EOF)
+        result = 1;
+    return result;
 }

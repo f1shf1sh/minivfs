@@ -1,52 +1,55 @@
+#include "cmd.h"
 #include "user.h"
+#include <fcntl.h>
 #include <stdio.h>
-#include <stdlib.h>
-
 
 int cmd_cp(int argc, char **argv) {
     if (argc != 3) {
-        printf("Usage: cp <source> <dest>\n");
+        fprintf(stderr, "Usage: cp <source> <dest>\n");
+        return -1;
+    }
+    my_stat_t source, target;
+    if (my_stat(argv[1], &source) < 0) {
+        perror("cp: source");
+        return -1;
+    }
+    if (source.type != MY_TYPE_FILE) {
+        fprintf(stderr, "cp: source must be a regular file\n");
+        return -1;
+    }
+    if (my_stat(argv[2], &target) == 0 && source.inum == target.inum) {
+        fprintf(stderr, "cp: source and destination are the same file\n");
+        return -1;
+    }
+    int fd_source = my_open(argv[1], O_RDONLY);
+    if (fd_source < 0) {
+        perror("cp: open source");
+        return -1;
+    }
+    int fd_target = my_open(argv[2], O_CREAT | O_WRONLY | O_TRUNC);
+    if (fd_target < 0) {
+        perror("cp: open destination");
+        my_close(fd_source);
         return -1;
     }
 
-    const char *src = argv[1];
-    const char *dst = argv[2];
-
-    int fd_src = my_open(src, O_RDONLY);
-    if (fd_src < 0) {
-        printf("cp: cannot open source file %s\n", src);
-        return -1;
-    }
-
-    int fd_dst = my_open(dst, O_CREAT | O_RDWR);
-    if (fd_dst < 0) {
-        printf("cp: cannot create destination file %s\n", dst);
-        my_close(fd_src);
-        return -1;
-    }
-
-    char *buf = malloc(BSIZE);
-    if (!buf) {
-        printf("cp: memory allocation failed\n");
-        my_close(fd_src);
-        my_close(fd_dst);
-        return -1;
-    }
-
-    int n;
-    while ((n = my_read(fd_src, buf, BSIZE)) > 0) {
-        int written = my_write(fd_dst, buf, n);
-        if (written != n) {
-            printf("cp: write error\n");
-            free(buf);
-            my_close(fd_src);
-            my_close(fd_dst);
-            return -1;
+    char buf[BSIZE];
+    int count;
+    int result = 0;
+    while ((count = my_read(fd_source, buf, sizeof(buf))) > 0) {
+        if (my_write(fd_target, buf, (uint32_t)count) != count) {
+            fprintf(stderr, "cp: write failed or was incomplete\n");
+            result = -1;
+            break;
         }
     }
-
-    free(buf);
-    my_close(fd_src);
-    my_close(fd_dst);
-    return 0;
+    if (count < 0) {
+        perror("cp: read");
+        result = -1;
+    }
+    if (my_close(fd_source) < 0)
+        result = -1;
+    if (my_close(fd_target) < 0)
+        result = -1;
+    return result;
 }

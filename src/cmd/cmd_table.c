@@ -1,27 +1,18 @@
 #include "cmd.h"
+#include <stddef.h>
 
-extern int cmd_ls(int argc, char **argv);
-extern int cmd_rm(int argc, char **argv);
-extern int cmd_cat(int argc, char **argv);
-extern int cmd_usertest(int argc, char **argv);
-extern int cmd_stressfs(int argc, char **argv);
-extern int cmd_echo(int argc, char **argv);
-extern int cmd_cp(int argc, char **argv);
-extern int cmd_fdisk(int argc, char **argv);
-extern int cmd_atomtest(int argc, char **argv);
-extern int cmd_touch(int argc, char **argv);
-
-// 命令表
-command_t command_table[] = {
+const command_t command_table[] = {
     {"ls", cmd_ls},
+    {"cat", cmd_cat},
+    {"cp", cmd_cp},
+    {"echo", cmd_echo},
+    {"rm", cmd_rm},
+    {"touch", cmd_touch},
+    {"mkdir", cmd_mkdir},
+    {"rmdir", cmd_rmdir},
+    {"fdisk", cmd_fdisk},
     {"usertest", cmd_usertest},
     {"stressfs", cmd_stressfs},
     {"atomtest", cmd_atomtest},
-    {"rm", cmd_rm},
-    {"cat", cmd_cat},
-    {"echo", cmd_echo},
-    {"cp", cmd_cp},
-    {"fdisk", cmd_fdisk},
-    {"touch", cmd_touch},
-    {NULL, NULL}  // 结束标记
+    {NULL, NULL}
 };

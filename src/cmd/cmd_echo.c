@@ -1,50 +1,59 @@
+#include "cmd.h"
 #include "user.h"
+#include <fcntl.h>
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
 int cmd_echo(int argc, char **argv) {
-    if (argc < 2) {
-        printf("\n"); 
-        return 0;
-    }
-
-    int redirect = 0;     
-    char *outfile = NULL;   
-    int i;
-
-    // 简单解析重定向
-    for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], ">") == 0 && i + 1 < argc) {
-            redirect = 1;
+    int end = argc;
+    const char *outfile = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], ">") == 0) {
+            if (i + 2 != argc) {
+                fprintf(stderr, "Usage: echo [words ...] [> file]\n");
+                return -1;
+            }
+            end = i;
             outfile = argv[i + 1];
             break;
         }
     }
 
-    // 构造输出内容
-    char buf[1024] = {0};
-    int pos = 0;
-    for (i = 1; i < argc; i++) {
-        if (redirect && i >= argc - 2) break; // skip '> filename'
-        int n = snprintf(buf + pos, sizeof(buf) - pos, "%s%s", argv[i], (i < argc - 1) ? " " : "");
-        pos += n;
+    size_t size = 1;
+    for (int i = 1; i < end; i++)
+        size += strlen(argv[i]) + (i > 1 ? 1u : 0u);
+    char *buf = malloc(size);
+    if (!buf)
+        return -1;
+    size_t pos = 0;
+    for (int i = 1; i < end; i++) {
+        if (i > 1)
+            buf[pos++] = ' ';
+        size_t length = strlen(argv[i]);
+        memcpy(buf + pos, argv[i], length);
+        pos += length;
     }
+    buf[pos++] = '\n';
 
-    if (pos < sizeof(buf) - 1) 
-        buf[pos++] = '\n'; // add newline
-
-    if (redirect) {
-        int fd = my_open(outfile, O_CREAT | O_RDWR);
+    int result = 0;
+    if (outfile) {
+        int fd = my_open(outfile, O_CREAT | O_WRONLY | O_TRUNC);
         if (fd < 0) {
-            printf("echo: cannot open %s\n", outfile);
-            return -1;
+            perror("echo: open");
+            result = -1;
+        } else {
+            if (my_write(fd, buf, (uint32_t)pos) != (int)pos) {
+                fprintf(stderr, "echo: write failed or was incomplete\n");
+                result = -1;
+            }
+            if (my_close(fd) < 0)
+                result = -1;
         }
-        my_write(fd, buf, pos);
-        my_close(fd);
-    } else {
-        printf("%s", buf);
+    } else if (fwrite(buf, 1, pos, stdout) != pos) {
+        perror("echo: output");
+        result = -1;
     }
-
-    return 0;
+    free(buf);
+    return result;
 }
