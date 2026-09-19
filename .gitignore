@@ -3,5 +3,5 @@
 *.o
 build
 bin
-tests
+__pycache__
 *.bak

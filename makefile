@@ -1,69 +1,59 @@
-CC := gcc
-CFLAGS := -Wall -Wextra -g -Iinclude
-LDFLAGS := -pthread
+CC ?= cc
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L -Iinclude
+CFLAGS ?= -std=c11 -O2 -g
+CFLAGS += -Wall -Wextra -Werror
+LDLIBS += -pthread
+BUILD_DIR ?= build
+BIN_DIR ?= bin
 
-# 目录定义
-SRC_DIR := src
-FS_DIR := src/fs
-VDEV_DIR := src/vdev
-SYS_DIR := src/sys
-USER_DIR := src/user
-TOOLS_DIR := tools
-SH_DIR := src/shell
-TEST_DIR := tests
-BIN_DIR := bin
-CMD_DIR := src/cmd
+CORE_SRC := src/fs/alloc.c src/fs/icache.c src/fs/inode.c src/fs/file.c \
+            src/fs/dir.c src/fs/path.c src/fs/fs.c src/vdev/disk.c \
+            src/sys/syscall.c src/user/user.c
+CMD_SRC := $(wildcard src/cmd/*.c)
+CORE_OBJ := $(CORE_SRC:%.c=$(BUILD_DIR)/%.o)
+CMD_OBJ := $(CMD_SRC:%.c=$(BUILD_DIR)/%.o)
+SHELL_OBJ := $(BUILD_DIR)/src/shell/sh.o
+MKFS_OBJ := $(BUILD_DIR)/tools/mkfs.o
+TEST_OBJ := $(BUILD_DIR)/tests/test_fs.o $(BUILD_DIR)/tests/test_io.o
+DEPS := $(CORE_OBJ:.o=.d) $(CMD_OBJ:.o=.d) $(SHELL_OBJ:.o=.d) \
+        $(MKFS_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
 
-# 通用对象文件（不包含 shell 和测试）
-COMMON_OBJ := $(FS_DIR)/dir.o $(FS_DIR)/fs.o $(FS_DIR)/inode.o $(FS_DIR)/path.o \
-              $(SYS_DIR)/syscall.o $(USER_DIR)/user.o $(VDEV_DIR)/disk.o \
-# 			  $(VDEV_DIR)/cache.o
+all: $(BIN_DIR)/mkfs $(BIN_DIR)/sh
+mkfs: $(BIN_DIR)/mkfs
+sh: $(BIN_DIR)/sh
 
-# cmd对象
-CMD_OBJ := $(CMD_DIR)/cmd_ls.o \
-		   $(CMD_DIR)/cmd_cat.o \
-		   $(CMD_DIR)/cmd_usertest.o \
-		   $(CMD_DIR)/cmd_rm.o \
-		   $(CMD_DIR)/cmd_echo.o \
-		   $(CMD_DIR)/cmd_cp.o \
-		   $(CMD_DIR)/cmd_stressfs.o \
-		   $(CMD_DIR)/cmd_fdisk.o \
-		   $(CMD_DIR)/cmd_atomtest.o \
-		   $(CMD_DIR)/cmd_touch.o \
-		   $(CMD_DIR)/cmd_table.o
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
-# 工具对象
-TOOLS_OBJ := $(TOOLS_DIR)/mkfs.o
+$(BIN_DIR)/mkfs: $(MKFS_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-# shell对象
-SH_OBJ := $(SH_DIR)/sh.o
+$(BIN_DIR)/sh: $(CORE_OBJ) $(CMD_OBJ) $(SHELL_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-# 测试对象
-TEST_OBJ := $(TEST_DIR)/user_test.o
+$(BIN_DIR)/test_fs: $(CORE_OBJ) $(BUILD_DIR)/tests/test_fs.o
+	@mkdir -p $(dir $@)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-all : mkfs sh
-# 目录
-$(BIN_DIR):
-	mkdir -p $(BIN_DIR)
+$(BIN_DIR)/test_io: $(CORE_OBJ) $(BUILD_DIR)/tests/test_io.o
+	@mkdir -p $(dir $@)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-# 通用编译规则
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+test: all $(BIN_DIR)/test_fs $(BIN_DIR)/test_io
+	python3 tests/run_tests.py $(BIN_DIR)
 
-# mkfs 可执行文件
-mkfs: $(COMMON_OBJ) $(TOOLS_OBJ) | $(BIN_DIR)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^ $(LDFLAGS)
+user_test: test
 
-# user_test 可执行文件
-user_test: $(COMMON_OBJ) $(TEST_OBJ) | $(BIN_DIR)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^ $(LDFLAGS)
-
-# shell 可执行文件
-sh: $(COMMON_OBJ) $(SH_OBJ) $(CMD_OBJ) | $(BIN_DIR)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^ $(LDFLAGS)
+sanitize:
+	$(MAKE) BUILD_DIR=build/sanitize BIN_DIR=bin/sanitize \
+	    CFLAGS='-std=c11 -O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer -fsanitize=address,undefined' \
+	    LDFLAGS='-fsanitize=address,undefined' test
 
 clean:
-	rm -f $(FS_DIR)/*.o $(VDEV_DIR)/*.o $(SYS_DIR)/*.o $(USER_DIR)/*.o \
-          $(TOOLS_DIR)/*.o $(SH_DIR)/*.o $(CMD_DIR)/*.o $(TEST_DIR)/*.o
-	rm bin/sh bin/mkfs
-.PHONY: all clean
+	rm -rf build bin
+
+-include $(DEPS)
+.PHONY: all mkfs sh test user_test sanitize clean
