@@ -1,142 +1,103 @@
 #include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
-
-#include "fs/fs.h"
-#include "fs/dir.h"
+#include <errno.h>
 #include "fs/path.h"
+#include "fs/dir.h"
 
-static void skip_slash(const char **p) {
-    while (**p == '/') (*p)++;
+static int valid_path(const char *path) {
+    if (!path || !path[0]) { errno = EINVAL; return 0; }
+    if (strnlen(path, MY_PATH_MAX) == MY_PATH_MAX) { errno = ENAMETOOLONG; return 0; }
+    return 1;
 }
 
-// 拆分路径为父目录和文件名
-int path_split(const char *path, char *parent, char *name) {
-    if (!path || !parent || !name) return -1;
-    size_t len = strlen(path);
-    if (len == 0) 
+int path_resolve(fs_t *fs, const char *path, int create, icache_t **out) {
+    if (!valid_path(path)) return -1;
+    icache_t *cur;
+    if (iget(fs, path[0] == '/' ? fs->root_inum : fs->cwd_inum, &cur) < 0)
         return -1;
-
-    const char *slash = strrchr(path, '/');
-    if (!slash) {
-        strcpy(parent, ".");
-        strcpy(name, path);
-    } else {
-        size_t plen = slash - path;
-        strncpy(parent, path, plen);
-        parent[plen] = '\0';
-        strcpy(name, slash + 1);
-        if (strlen(parent) == 0) strcpy(parent, "/");
-    }
-    return 0;
-}
-
-// 核心路径解析
-int path_resolve(fs_t *fs, const char *path, int create, icache_t **res_ic) {
-    if (!fs || !path || !res_ic) 
-        return -1;
-
-    icache_t *cur_ic = NULL;
-    uint32_t cur_inum;
-
-    // 绝对路径从 root 开始
-    if (path[0] == '/') 
-        cur_inum = fs->root_inum;
-    else 
-        cur_inum = fs->cwd_inum;  // 相对路径从 cwd 开始
-
-    if (iget(fs, cur_inum, &cur_ic) < 0) 
-        return -1;
-
-    // 使用栈处理路径段
-    // int MAX_PATH_DEPTH = 128;
-    char *components[128];
-    int depth = 0;
-
     const char *p = path;
-    skip_slash(&p);
     while (*p) {
-        char buf[FILENAME_MAX];
+        while (*p == '/') p++;
+        if (!*p) break;
         const char *start = p;
-        while (*p && *p != '/') 
-            p++;
-        size_t len = p - start;
-        if (len >= FILENAME_MAX) 
-            len = FILENAME_MAX - 1;
-        strncpy(buf, start, len);
-        buf[len] = '\0';
-        skip_slash(&p);
-
-        if (strcmp(buf, ".") == 0) 
-            continue;
-        if (strcmp(buf, "..") == 0) {
-            if (depth > 0) 
-            depth--;
-            continue;
+        while (*p && *p != '/') p++;
+        size_t len = (size_t)(p - start);
+        if (cur->inode.type != TYPE_DIR) { errno = ENOTDIR; goto fail; }
+        if (len >= FILENAME_MAX_LEN) { errno = ENAMETOOLONG; goto fail; }
+        char name[FILENAME_MAX_LEN];
+        memcpy(name, start, len); name[len] = '\0';
+        int found = dir_lookup(fs, cur, name);
+        if (found == -2 && create && !*p) {
+            uint32_t inum;
+            if (path_create(fs, cur, name, TYPE_FILE, &inum) < 0) goto fail;
+            found = (int)inum;
         }
-        components[depth++] = strdup(buf);
+        if (found < 0) goto fail;
+        icache_t *next;
+        if (iget(fs, (uint32_t)found, &next) < 0) goto fail;
+        iput(fs, cur);
+        cur = next;
+        if (*p == '/' && cur->inode.type != TYPE_DIR) { errno = ENOTDIR; goto fail; }
     }
+    *out = cur;
+    return 0;
+fail:
+    iput(fs, cur);
+    return -1;
+}
 
-    // 遍历栈找到最终 inode
-    for (int i = 0; i < depth; i++) {
-        int next_inum = dir_lookup(fs, cur_ic, components[i]);
-        if (next_inum < 0) {
-            if (create && i == depth - 1) {
-                // 最后一个文件可创建
-                if (path_create(fs, cur_ic, components[i], TYPE_FILE, &next_inum) < 0) {
-                    iput(fs, cur_ic);
-                    return -1;
-                }
-            } else {
-                iput(fs, cur_ic);
-                return -1;
-            }
-        }
-
-        icache_t *next_ic = NULL;
-        if (iget(fs, next_inum, &next_ic) < 0) {
-            iput(fs, cur_ic);
-            return -1;
-        }
-
-        iput(fs, cur_ic);
-        cur_ic = next_ic;
+int path_parent(fs_t *fs, const char *path, icache_t **parent, char *name) {
+    if (!valid_path(path)) return -1;
+    char buf[MY_PATH_MAX];
+    size_t len = strlen(path);
+    memcpy(buf, path, len + 1);
+    while (len > 1 && buf[len - 1] == '/') buf[--len] = '\0';
+    char *slash = strrchr(buf, '/');
+    const char *child = slash ? slash + 1 : buf;
+    size_t child_len = strlen(child);
+    if (!child_len || child_len >= FILENAME_MAX_LEN ||
+        !strcmp(child, ".") || !strcmp(child, "..")) {
+        errno = child_len >= FILENAME_MAX_LEN ? ENAMETOOLONG : EINVAL;
+        return -1;
     }
-
-    *res_ic = cur_ic;
+    memcpy(name, child, child_len + 1);
+    const char *parent_path = ".";
+    if (slash) {
+        if (slash == buf) parent_path = "/";
+        else { *slash = '\0'; parent_path = buf; }
+    }
+    if (path_resolve(fs, parent_path, 0, parent) < 0) return -1;
+    if ((*parent)->inode.type != TYPE_DIR) {
+        iput(fs, *parent);
+        errno = ENOTDIR;
+        return -1;
+    }
     return 0;
 }
 
-// 获取父目录 inode
-int path_parent(fs_t *fs, const char *path, icache_t **parent_ic, char *child_name) {
-    char parent[FILENAME_MAX];
-    if (path_split(path, parent, child_name) < 0) 
-        return -1;
-    return path_resolve(fs, parent, 0, parent_ic);
-}
-
-// 查找子文件 inode
-int path_lookup(fs_t *fs, icache_t *parent_ic, const char *name, uint32_t *res_inum) {
-    return dir_lookup(fs, parent_ic, name);
-}
-
-// 创建子文件
-int path_create(fs_t *fs, icache_t *parent_ic, const char *name, uint32_t type, uint32_t *res_inum) {
-    // 分配 inode
-    uint32_t inum = ialloc(fs);
-    if (inum == 0) 
-        return -1;
-
-    icache_t c = {0};
-    c.inode.type = type;
-    if (iwrite(fs, inum, &c) < 0) 
-        return -1;
-
-    if (dir_add(fs, parent_ic, name, inum) < 0) {
-        ifree(fs, inum);
+int path_create(fs_t *fs, icache_t *parent, const char *name,
+                uint32_t type, uint32_t *inum_out) {
+    int found = dir_lookup(fs, parent, name);
+    if (found != -2) { if (found >= 0) errno = EEXIST; return -1; }
+    if (type != TYPE_FILE && type != TYPE_DIR) { errno = EINVAL; return -1; }
+    int inum = ialloc(fs);
+    if (inum < 0) return -1;
+    icache_t *created;
+    if (iget(fs, (uint32_t)inum, &created) < 0) {
+        ifree(fs, (uint32_t)inum);
         return -1;
     }
-
-    *res_inum = inum;
-    return 0;
+    created->inode.type = type;
+    created->inode.links = 1;
+    created->dirty = 1;
+    if ((type == TYPE_DIR &&
+         (dir_add(fs, created, ".", (uint32_t)inum) < 0 ||
+          dir_add(fs, created, "..", parent->inum) < 0)) ||
+        dir_add(fs, parent, name, (uint32_t)inum) < 0) {
+        created->inode.links = 0;
+        created->dirty = 1;
+        iput(fs, created);
+        return -1;
+    }
+    *inum_out = (uint32_t)inum;
+    return iput(fs, created);
 }

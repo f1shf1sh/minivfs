@@ -1,209 +1,79 @@
-#include "fs/fs.h"
-#include "fs/dir.h"
-#include "defs.h"
-#include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
+#include <errno.h>
+#include "fs/dir.h"
 
-
-static int name_eq(const char *a, const char *b) {
-    return strncmp(a, b, FILENAME_MAX_LEN) == 0;
+int dir_read_entry(fs_t *fs, icache_t *dir, uint32_t *offset, dirent_t *out) {
+    if (dir->inode.type != TYPE_DIR) { errno = ENOTDIR; return -1; }
+    if (*offset % sizeof(*out)) { errno = EINVAL; return -1; }
+    while (*offset < dir->inode.size) {
+        int n = bread(fs, dir, out, sizeof(*out), *offset);
+        if (n != (int)sizeof(*out)) { if (n >= 0) errno = EIO; return -1; }
+        *offset += sizeof(*out);
+        if (out->inum) {
+            if (!memchr(out->name, '\0', sizeof(out->name))) { errno = EIO; return -1; }
+            return 1;
+        }
+    }
+    return 0;
 }
 
-/* dir_lookup: 查找目录项，返回 inode number 或 -ENOENT/-EIO */
-int dir_lookup(fs_t *fs, icache_t *dir_ic, const char *name) {
-    if (!fs || !dir_ic || !name) 
-        return -1;
-
-
-    uint32_t dir_size = dir_ic->inode.size;
+int dir_lookup(fs_t *fs, icache_t *dir, const char *name) {
     uint32_t offset = 0;
-    dirent_t *buf = malloc(BSIZE);
-
-    if (!buf) {
-        return -1;
-    }
-
-    while (offset < dir_size) {
-        int r = bread(fs, dir_ic, buf, BSIZE, offset);
-        if (r <= 0) 
-            break;
-        int entries = r / DIR_SIZE;
-        for (int i = 0; i < entries; i++) {
-            if (buf[i].inum != 0 && name_eq(buf[i].name, name)) {
-                uint32_t found = buf[i].inum;
-                free(buf);
-                return (int)found;
-            }
-        }
-        offset += BSIZE;
-    }
-
-    dir_ic->dirty = 1;
-    free(buf);
-    return -1;
-}
-
-/* dir_add_entry: 添加目录项（线程安全） */
-int dir_add(fs_t *fs, icache_t *dir_ic, const char *name, uint32_t inum) {
-    if (!fs || !dir_ic || !name) 
-        return -1;
-    if (strlen(name) >= FILENAME_MAX_LEN) 
-        return -1;
-
-
-    uint32_t dir_size = dir_ic->inode.size;
-    uint32_t offset = 0;
-    dirent_t *buf = malloc(BSIZE);
-    if (!buf) { 
-        return -1; 
-    }
-
-    int found_dup = 0;
-    int found_slot = 0;
-    uint32_t slot_offset = 0;
-
-    while (offset < dir_size) {
-        int r = bread(fs, dir_ic, buf, BSIZE, offset);
-        if (r < 0) { 
-            free(buf); 
-            return -1; 
-        }
-
-        int entries = r / sizeof(dirent_t);
-        for (int i = 0; i < entries; i++) {
-            if (buf[i].inum != 0) {
-                if (name_eq(buf[i].name, name)) {
-                    found_dup = 1;
-                    break;
-                }
-            } 
-
-            if (!found_slot && buf[i].inum == 0) {
-                found_slot = 1;
-                slot_offset = offset + i * sizeof(dirent_t);
-            }
-        }
-        if (found_dup) 
-            break;
-        offset += BSIZE;
-    }
-
-    if (found_dup) {
-        free(buf);
-        return -1;
-    }
-
-    /* 如果没找到空槽，则 slot_offset = dir_size (append at end) */
-    if (!found_slot && !found_dup) {
-        slot_offset = dir_size;
-    }
-
-
     dirent_t entry;
+    int r;
+    while ((r = dir_read_entry(fs, dir, &offset, &entry)) > 0) {
+        if (!strcmp(entry.name, name)) return (int)entry.inum;
+    }
+    /* -2 distinguishes a missing entry from an I/O or format error. */
+    if (r < 0) return -1;
+    errno = ENOENT;
+    return -2;
+}
+
+int dir_add(fs_t *fs, icache_t *dir, const char *name, uint32_t inum) {
+    size_t len = strlen(name);
+    if (!len || len >= FILENAME_MAX_LEN || strchr(name, '/')) {
+        errno = len >= FILENAME_MAX_LEN ? ENAMETOOLONG : EINVAL;
+        return -1;
+    }
+    int found = dir_lookup(fs, dir, name);
+    if (found != -2) { if (found >= 0) errno = EEXIST; return -1; }
+    uint32_t slot = dir->inode.size;
+    dirent_t entry;
+    for (uint32_t off = 0; off < dir->inode.size; off += sizeof(entry)) {
+        if (bread(fs, dir, &entry, sizeof(entry), off) != (int)sizeof(entry))
+            return -1;
+        if (!entry.inum) { slot = off; break; }
+    }
     memset(&entry, 0, sizeof(entry));
     entry.inum = inum;
-    strncpy(entry.name, name, FILENAME_MAX_LEN - 1);
-    /* write into slot (可能是在已有块内也可能是新块) */
-    if (bwrite(fs, dir_ic, &entry, sizeof(entry), slot_offset, 1) < 0) {
-        free(buf);
-        return -1;
-    } 
-
-    dir_ic->dirty = 1;
-    free(buf);
-    return 0;
+    memcpy(entry.name, name, len + 1);
+    return bwrite(fs, dir, &entry, sizeof(entry), slot, 1) == (int)sizeof(entry)
+        ? 0 : -1;
 }
 
-/* dir_remove_entry: 删除目录项 */
-int dir_remove(fs_t *fs, icache_t *dir_ic, const char *name) {
-    if (!fs || !dir_ic || !name) 
-        return -1;
-
-    uint32_t dir_size = dir_ic->inode.size;
+int dir_remove(fs_t *fs, icache_t *dir, const char *name) {
+    if (!strcmp(name, ".") || !strcmp(name, "..")) { errno = EINVAL; return -1; }
     uint32_t offset = 0;
-    dirent_t *buf = malloc(dir_size);
-    if (!buf) { 
-        return -1; 
-    }
-
-    while (offset < dir_size) {
-        int r = bread(fs, dir_ic, buf, BSIZE, offset);
-        if (r <= 0) break;
-        int entries = r / sizeof(dirent_t);
-        for (int i = 0; i < entries; i++) {
-            if (buf[i].inum != 0 && name_eq(buf[i].name, name)) {
-                uint32_t target_inum = buf[i].inum;
-                buf[i].inum = 0;
-                memset(buf[i].name, 0, FILENAME_MAX_LEN);
-                if (bwrite(fs, dir_ic, buf, BSIZE, offset, 0) < 0) {
-                    free(buf);
-                    return -1;
-                }
-                
-                icache_t *target_ic;
-                if (iget(fs, target_inum, &target_ic) == 0) {
-                    // 简单版：释放所有直接块与间接块
-                    for (int idx = 0; idx < NDIRECT; idx++) {
-                        if (target_ic->inode.direct[idx])
-                            bfree(fs, target_ic->inode.direct[idx]);
-                    }
-
-                    if (target_ic->inode.direct[NDIRECT] && target_ic->indirect) {
-                        for (uint32_t idx = 0; idx < BSIZE / sizeof(uint32_t); idx++) {
-                            if (target_ic->indirect[idx])
-                                bfree(fs, target_ic->indirect[idx]);
-                        }
-                        bfree(fs, target_ic->inode.direct[NDIRECT]);
-                    }
-
-                    ifree(fs, target_inum);  // 回收 inode 号
-                    target_ic->inode.size = 0;
-                    iput(fs, target_ic);    // 写回并释放缓存
-                }
-
-                free(buf);
-                return 0;
-            }
+    dirent_t entry;
+    int r;
+    while ((r = dir_read_entry(fs, dir, &offset, &entry)) > 0) {
+        if (!strcmp(entry.name, name)) {
+            memset(&entry, 0, sizeof(entry));
+            return bwrite(fs, dir, &entry, sizeof(entry), offset - sizeof(entry), 0)
+                == (int)sizeof(entry) ? 0 : -1;
         }
-        offset += BSIZE;
     }
-
-    dir_ic->dirty = 1;
-    free(buf);
+    if (r == 0) errno = ENOENT;
     return -1;
 }
 
-/* dir_list: 打印目录（调试） */
-int dir_list(fs_t *fs, icache_t *dir_ino) {
-    if (!fs || !dir_ino) 
-        return -1;
-
-    uint32_t dir_size = dir_ino->inode.size;
+int dir_is_empty(fs_t *fs, icache_t *dir) {
     uint32_t offset = 0;
-    dirent_t *buf = malloc(BSIZE);
-    if (!buf) { 
-        return -1; 
+    dirent_t entry;
+    int r;
+    while ((r = dir_read_entry(fs, dir, &offset, &entry)) > 0) {
+        if (strcmp(entry.name, ".") && strcmp(entry.name, "..")) return 0;
     }
-
-    printf("Name\t\tSize (bytes)\n");
-    printf("---------------------------\n");
-
-    while (offset < dir_size) {
-        int r = bread(fs, dir_ino, buf, BSIZE, offset);
-        if (r <= 0) break;
-        int entries = r / sizeof(dirent_t);
-        for (int i = 0; i < entries; i++) {
-            if (buf[i].inum != 0) {
-                icache_t *f;
-                iget(fs, buf[i].inum, &f);
-                printf("%-10s\t0x%x\n", buf[i].name,f->inode.size);
-                iput(fs, f);
-            }
-        }
-        offset += BSIZE;
-    }
-
-    free(buf);
-    return 0;
+    return r < 0 ? -1 : 1;
 }
