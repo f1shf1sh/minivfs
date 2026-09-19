@@ -1,5 +1,7 @@
 #pragma once
 
+#include <fcntl.h>
+
 // disk layer
 #define BSIZE (1 << 12) // size of block
 #define BCOUNTS (1 << 16) // total blocks
@@ -15,11 +17,5 @@
 
 #define FILENAME_MAX_LEN 60
 
-/* open flags */
-#define O_RDONLY 0x0
-#define O_WRONLY 0x1
-#define O_RDWR   0x2
-#define O_CREAT  0x40
-#define O_APPEND 0x400
-
+#define MY_PATH_MAX 4096
 #define MAXFD 128
