@@ -14,7 +14,7 @@ CORE_OBJ := $(CORE_SRC:%.c=$(BUILD_DIR)/%.o)
 CMD_OBJ := $(CMD_SRC:%.c=$(BUILD_DIR)/%.o)
 SHELL_OBJ := $(BUILD_DIR)/src/shell/sh.o
 MKFS_OBJ := $(BUILD_DIR)/tools/mkfs.o
-TEST_OBJ := $(BUILD_DIR)/tests/test_fs.o $(BUILD_DIR)/tests/test_io.o
+TEST_OBJ := $(BUILD_DIR)/tests/test_fs.o $(BUILD_DIR)/tests/test_io.o $(BUILD_DIR)/tests/soak.o
 DEPS := $(CORE_OBJ:.o=.d) $(CMD_OBJ:.o=.d) $(SHELL_OBJ:.o=.d) \
         $(MKFS_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
 
@@ -47,6 +47,12 @@ test: all $(BIN_DIR)/test_fs $(BIN_DIR)/test_io
 
 user_test: test
 
+soak: $(BIN_DIR)/mkfs $(BIN_DIR)/soak
+
+$(BIN_DIR)/soak: $(CORE_OBJ) $(BUILD_DIR)/tests/soak.o
+	@mkdir -p $(dir $@)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 sanitize:
 	$(MAKE) BUILD_DIR=build/sanitize BIN_DIR=bin/sanitize \
 	    CFLAGS='-std=c11 -O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer -fsanitize=address,undefined' \
@@ -56,4 +62,4 @@ clean:
 	rm -rf build bin
 
 -include $(DEPS)
-.PHONY: all mkfs sh test user_test sanitize clean
+.PHONY: all mkfs sh test user_test soak sanitize clean
